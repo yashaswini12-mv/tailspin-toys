@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { createTestDatabase } from '../../db/test-helpers';
 import { categories, publishers, games } from '../../db/schema';
 import type { Database } from './db';
 import {
     getAllGames,
     getAllGameIds,
+    getFilteredGames,
     getGameById,
 } from './games';
 
@@ -50,6 +52,64 @@ describe('games data-access helpers', () => {
         const ids = await getAllGameIds(db);
         const all = await getAllGames(db);
         expect(ids).toEqual(all.map((g) => g.id));
+    });
+
+    it('filters games by one or more categories and a publisher', async () => {
+        const [strategy] = await db
+            .insert(categories)
+            .values([
+                { name: 'Strategy', description: 'strategy' },
+                { name: 'Puzzle', description: 'puzzle' },
+            ])
+            .returning({ id: categories.id, name: categories.name });
+        const [firstPublisher] = await db
+            .insert(publishers)
+            .values([
+                { name: 'Pub One', description: 'first' },
+                { name: 'Pub Two', description: 'second' },
+            ])
+            .returning({ id: publishers.id, name: publishers.name });
+        const puzzle = await db
+            .select({ id: categories.id, name: categories.name })
+            .from(categories)
+            .where(eq(categories.name, 'Puzzle'))
+            .get();
+        const secondPublisher = await db
+            .select({ id: publishers.id, name: publishers.name })
+            .from(publishers)
+            .where(eq(publishers.name, 'Pub Two'))
+            .get();
+
+        await db.insert(games).values([
+            {
+                title: 'Strategy One',
+                description: 'one',
+                starRating: 4,
+                categoryId: strategy.id,
+                publisherId: firstPublisher.id,
+            },
+            {
+                title: 'Puzzle One',
+                description: 'two',
+                starRating: 4,
+                categoryId: puzzle!.id,
+                publisherId: firstPublisher.id,
+            },
+            {
+                title: 'Puzzle Two',
+                description: 'three',
+                starRating: 4,
+                categoryId: puzzle!.id,
+                publisherId: secondPublisher!.id,
+            },
+        ]);
+
+        const filtered = await getFilteredGames(db, {
+            categoryNames: ['Strategy', 'Puzzle'],
+            publisherName: 'Pub One',
+        });
+
+        expect(filtered.map((game) => game.title)).toEqual(['Puzzle One', 'Strategy One']);
     });
 
     it('fetches a single game by id', async () => {
